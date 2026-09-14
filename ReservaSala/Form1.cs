@@ -4,19 +4,7 @@ namespace ReservaSala
 {
     public partial class frmReserva : Form
     {
-        // O documento informa explicitamente capacidade 10 para a sala Osasco,
-        // mas não fornece as capacidades das demais salas. Para não inventar
-        // capacidades diferentes das especificadas, todas ficam com capacidade 10.
-        private readonly Dictionary<string, int> capacidadesSalas = new()
-        {
-            ["Osasco"] = 10,
-            ["Jundiaí"] = 10,
-            ["Iguatu"] = 10,
-            ["Campos do Jordão"] = 10,
-            ["São Caetano"] = 10,
-            ["Santo André"] = 10,
-            ["São Bernardo do Campo"] = 10
-        };
+        
 
         private string CaminhoArquivoReservas => Path.Combine(AppContext.BaseDirectory, "reservas.txt");
 
@@ -43,113 +31,11 @@ namespace ReservaSala
 
         private void btnReservar_Click(object sender, EventArgs e)
         {
-            var camposFaltantes = new List<string>();
-
-            if (string.IsNullOrWhiteSpace(txtNome.Text))
-                camposFaltantes.Add("Responsável");
-
-            if (cmbSala.SelectedIndex < 0)
-                camposFaltantes.Add("Sala");
-
-            if (dtpData.Value.Date < DateTime.Today)
-                camposFaltantes.Add("Data válida");
-
-            if (cmbHorario.SelectedIndex < 0)
-                camposFaltantes.Add("Horário inicial");
-
-            if (cmbHorarioFinal.SelectedIndex < 0)
-                camposFaltantes.Add("Horário final");
-
-            if (numParticipantes.Value < 1)
-                camposFaltantes.Add("Quantidade de participantes");
-
-            if (camposFaltantes.Count > 0)
-            {
-                MessageBox.Show(
-                    "Preencha os seguintes campos obrigatórios:\n- " +
-                    string.Join("\n- ", camposFaltantes),
-                    "Campos obrigatórios",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
+            if (!ValidarReserva())
                 return;
-            }
 
-            if (!ValidarLetras(txtNome.Text.Trim()))
-            {
-                MessageBox.Show(
-                    "Não é permitido digitar números ou caracteres especiais no campo responsável.",
-                    "Responsável inválido",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
+            Reserva reserva = CriarReserva();
 
-            TimeSpan horarioInicial = TimeSpan.Parse(cmbHorario.Text);
-            TimeSpan horarioFinal = TimeSpan.Parse(cmbHorarioFinal.Text);
-
-            // CA04: o horário inicial precisa ser anterior ao horário final.
-            if (horarioInicial >= horarioFinal)
-            {
-                MessageBox.Show(
-                    "O horário inicial deve ser anterior ao horário final.",
-                    "Horário inválido",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
-
-            TimeSpan duracao = horarioFinal - horarioInicial;
-
-            // CA08: máximo de 4 horas, sendo exatamente 4h permitido.
-            if (duracao > TimeSpan.FromHours(4))
-            {
-                MessageBox.Show(
-                    "A duração da reserva não pode ser superior a 4 horas.",
-                    "Duração inválida",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
-
-            // CA03: para hoje, início precisa estar pelo menos 1 hora à frente.
-            if (dtpData.Value.Date == DateTime.Today &&
-                horarioInicial < DateTime.Now.TimeOfDay.Add(TimeSpan.FromHours(1)))
-            {
-                MessageBox.Show(
-                    "Para reservas na data de hoje, o horário inicial deve ser pelo menos 1 hora posterior ao momento da solicitação.",
-                    "Antecedência insuficiente",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
-
-            int participantes = (int)numParticipantes.Value;
-            int capacidade = capacidadesSalas[cmbSala.Text];
-
-            // CA05: participantes não podem ultrapassar a capacidade da sala.
-            if (participantes > capacidade)
-            {
-                MessageBox.Show(
-                    $"A sala {cmbSala.Text} comporta no máximo {capacidade} participantes.",
-                    "Capacidade excedida",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
-
-            string equipamentos = ObterEquipamentosSelecionados();
-
-            Reserva reserva = new Reserva(
-                txtNome.Text.Trim(),
-                cmbSala.Text,
-                dtpData.Value.Date,
-                horarioInicial,
-                horarioFinal,
-                participantes,
-                equipamentos);
-
-            // CA06 e CA07: verifica conflito permitindo início exatamente
-            // no horário de término da reserva anterior.
             if (VerificarConflito(reserva))
             {
                 MessageBox.Show(
@@ -161,6 +47,7 @@ namespace ReservaSala
             }
 
             SalvarReserva(reserva);
+
             MessageBox.Show(
                 "Reserva realizada com sucesso!",
                 "Reserva",
@@ -168,12 +55,15 @@ namespace ReservaSala
                 MessageBoxIcon.Information);
 
             MostrarReservasNaTela();
+            LimparCampos();
         }
 
         private Reserva CriarReserva()
         {
             TimeSpan horarioInicial = TimeSpan.Parse(cmbHorario.Text);
             TimeSpan horarioFinal = TimeSpan.Parse(cmbHorarioFinal.Text);
+            int participantes = (int)numParticipantes.Value;
+            string equipamentos = ObterEquipamentosSelecionados();
 
             return new Reserva(
                 txtNome.Text.Trim(),
@@ -181,8 +71,8 @@ namespace ReservaSala
                 dtpData.Value.Date,
                 horarioInicial,
                 horarioFinal,
-                (int)numParticipantes.Value,
-                ObterEquipamentosSelecionados());
+                participantes,
+                equipamentos);
         }
 
         private void SalvarReserva(Reserva reserva)
@@ -315,7 +205,16 @@ namespace ReservaSala
             for (int i = 0; i < reservas.Count; i++)
             {
                 Reserva r = reservas[i];
-                TimeSpan duracao = r.HorarioFinal - r.HorarioInicial;
+                TimeSpan duracao;
+
+                if (r.HorarioFinal <= r.HorarioInicial)
+                {
+                    duracao = (TimeSpan.FromHours(24) - r.HorarioInicial) + r.HorarioFinal;
+                }
+                else
+                {
+                    duracao = r.HorarioFinal - r.HorarioInicial;
+                }
 
                 texto.AppendLine($"Reserva {i + 1}");
                 texto.AppendLine($"Responsável: {r.Responsavel}");
@@ -343,6 +242,7 @@ namespace ReservaSala
 
         private void cmbSala_SelectedIndexChanged(object? sender, EventArgs e)
         {
+           
             AtualizarInformacoesSala();
         }
 
@@ -354,8 +254,8 @@ namespace ReservaSala
                 return;
             }
 
-            int capacidade = capacidadesSalas[cmbSala.Text];
-            lblInfoSala.Text = $"Capacidade máxima: {capacidade} participantes";
+
+            lblInfoSala.Text = "Capacidade máxima: 10 participantes";
         }
 
         private void cmbHorarioFinal_SelectedIndexChanged(object? sender, EventArgs e)
@@ -385,6 +285,107 @@ namespace ReservaSala
             }
 
             return input.Length > 0;
+        }
+
+        private bool ValidarReserva()
+        {
+            var camposFaltantes = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(txtNome.Text))
+                camposFaltantes.Add("Responsável");
+
+            if (cmbSala.SelectedIndex < 0)
+                camposFaltantes.Add("Sala");
+
+            if (dtpData.Value.Date < DateTime.Today)
+                camposFaltantes.Add("Data válida");
+
+            if (cmbHorario.SelectedIndex < 0)
+                camposFaltantes.Add("Horário inicial");
+
+            if (cmbHorarioFinal.SelectedIndex < 0)
+                camposFaltantes.Add("Horário final");
+
+            if (numParticipantes.Value < 1)
+                camposFaltantes.Add("Quantidade de participantes");
+
+            if (camposFaltantes.Count > 0)
+            {
+                MessageBox.Show(
+                    "Preencha os seguintes campos obrigatórios:\n- " +
+                    string.Join("\n- ", camposFaltantes),
+                    "Campos obrigatórios",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+
+                return false;
+            }
+
+            if (!ValidarLetras(txtNome.Text.Trim()))
+            {
+                MessageBox.Show(
+                    "Não é permitido digitar números ou caracteres especiais no campo responsável.",
+                    "Responsável inválido",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+
+                return false;
+            }
+
+            TimeSpan horarioInicial = TimeSpan.Parse(cmbHorario.Text);
+            TimeSpan horarioFinal = TimeSpan.Parse(cmbHorarioFinal.Text);
+
+            // CA04 e CA08
+            TimeSpan duracao;
+
+            if (horarioFinal <= horarioInicial)
+            {
+                duracao = (TimeSpan.FromHours(24) - horarioInicial) + horarioFinal;
+            }
+            else
+            {
+                duracao = horarioFinal - horarioInicial;
+            }
+
+            if (duracao > TimeSpan.FromHours(4))
+            {
+                MessageBox.Show(
+                    "A reserva não pode ter duração superior a 4 horas.",
+                    "Horário inválido",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+
+                return false;
+            }
+
+            // CA03
+            if (dtpData.Value.Date == DateTime.Today &&
+                horarioInicial < DateTime.Now.TimeOfDay.Add(TimeSpan.FromHours(1)))
+            {
+                MessageBox.Show(
+                    "Para reservas na data de hoje, o horário inicial deve ser pelo menos 1 hora posterior ao momento da solicitação.",
+                    "Antecedência insuficiente",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+
+                return false;
+            }
+            return true;
+        }
+        private void LimparCampos()
+        {
+            txtNome.Clear();
+            cmbSala.SelectedIndex = -1;
+            cmbHorario.SelectedIndex = -1;
+            cmbHorarioFinal.SelectedIndex = -1;
+            dtpData.Value = DateTime.Today;
+            numParticipantes.Value = 1;
+
+            for (int i = 0; i < ClbItens.Items.Count; i++)
+            {
+                ClbItens.SetItemChecked(i, false);
+            }
+            ClbItens.SelectedIndex = -1;
         }
     }
 }
